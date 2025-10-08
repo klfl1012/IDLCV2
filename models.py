@@ -80,61 +80,47 @@ class FrameAggregation2D(nn.Module):
         return self.fc(feats)
 
 
-# class FrameAggregation3D(nn.Module):
-
-#     def __init__(self, num_classes):
-#         super().__init__()
-#         self.backbone = Simple3DCNN(num_classes=num_classes)
-#         self.fc = nn.Linear(256, num_classes)
-
-#     def forward(self, x):
-#         B, N, C, T, H, W = x.shape
-#         x = x.view(B*N, C, T, H, W)
-#         feats = self.backbone(x)
-#         feats = x.view(B, N, -1).mean(dim=1)
-#         return self.fc(feats)
-
-
-
 class LateFusion2D(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         # Feature extractors (no classification head)
         self.rgb_model = Simple2DCNN(num_classes=None)
-        self.flow_model = Simple2DCNN(num_classes=None)
 
         # Final fusion classifier
-        self.fc = nn.Linear(2 * 256, num_classes)
+        self.fc = nn.Linear(10 * 256, num_classes)
 
     def forward(self, rgb, flow):
         B, T, C, H, W = rgb.shape
 
         # Flatten temporal dimension
         rgb = rgb.view(B * T, C, H, W)
-        flow = flow.view(B * T, C, H, W)
 
         # Extract per-frame features
         rgb_feats = self.rgb_model(rgb).view(B, T, -1).mean(dim=1)
-        flow_feats = self.flow_model(flow).view(B, T, -1).mean(dim=1)
 
         # Fuse modalities
-        fused = torch.cat([rgb_feats, flow_feats], dim=1)
-        return self.fc(fused)
+        return self.fc(rgb_feats)
 
+class TwoStream2D(nn.Module):
 
+    def __init__(self, num_classes):
+        super().__init__()
+        self.rgb_model = Simple2DCNN(num_classes=10)
+        self.flow_model = Simple2DCNN(num_classes=10)
 
-# class LateFusion3D(nn.Module):
+    def forward(self, rgb, flow):
+        B, T, C, H, W = rgb.shape
 
-#     def __init__(self, num_classes):
-#         super().__init__()
-#         self.rgb_model = Simple3DCNN(num_classes=num_classes)
-#         self.flow_model = Simple3DCNN(num_classes=num_classes)
+        # Flatten temporal dimension
+        rgb = rgb.view(B * T, C, H, W)
+        flow = flow.view(B, (T - 1) * C, H, W)
 
-#         self.fc = nn.Linear(2 * 256, num_classes)
+        #softmax on both streams
+        rgb_feats = self.rgb_model(rgb).view(B, T, -1)
+        flow_feats = self.flow_model(flow).view(B, T - 1, -1)
 
-#     def forward(self, rgb, flow):
-#         rgb_feats = self.rgb_model(rgb)
-#         flow_feats = self.flow_model(flow)
-#         fused = torch.cat([rgb_feats, flow_feats], dim=1)
-#         return self.fc(fused)
+        rgb_feats = F.softmax(rgb_feats, dim=-1)
+        flow_feats = F.softmax(flow_feats, dim=-1)
+
+        return rgb_feats + flow_feats
 
