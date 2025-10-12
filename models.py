@@ -16,7 +16,7 @@ class Simple2DCNN(nn.Module):
         
         self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(256)
-        self.pool3 = nn.MaxPool2d((1, 1))
+        self.pool3 = nn.AdaptiveAvgPool2d(1)
 
         self.features = nn.Sequential(
             self.conv1, self.bn1, nn.ReLU(), self.pool1,

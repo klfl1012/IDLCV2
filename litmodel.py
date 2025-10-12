@@ -1,11 +1,13 @@
-import os 
+import os
 from typing import Optional, Type
+
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.profilers import PyTorchProfiler
+from torch.profiler import ProfilerActivity
 
 
 class LitClassifier(pl.LightningModule):
@@ -30,45 +32,86 @@ class LitClassifier(pl.LightningModule):
         self.outdir = outdir
         os.makedirs(self.outdir, exist_ok=True)
         self.history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
-
-
+        self._train_epoch_metrics = []
+        self._val_epoch_metrics = []
     def forward(self, x):
         return self.model(x)
-    
+
+    def on_train_epoch_start(self):
+        self._train_epoch_metrics = []
+
+    def on_validation_epoch_start(self):
+        self._val_epoch_metrics = []
 
     def training_step(self, batch, batch_idx):
-        X, y = batch[:2]
+        X, y = batch
         logits = self(X)
         loss = self.criterion(logits, y)
         preds = logits.argmax(dim=1)
         acc = (preds == y).float().mean()
-        return {"loss": loss, "acc": acc}
-    
 
-    def training_epoch_end(self, outputs):
-        avg_train_loss = torch.stack([x["loss"] for x in outputs]).mean().item()
-        avg_val_loss = torch.stack([x["acc"] for x in outputs]).mean().item()
-        self.history["train_loss"].append(avg_train_loss)
-        self.history["train_acc"].append(avg_val_loss)
+        self.log(
+            "train_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "train_acc",
+            acc,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=y.size(0),
+        )
 
+        self._train_epoch_metrics.append((loss.detach(), acc.detach()))
+        return loss
+
+    def on_train_epoch_end(self):
+        if not self._train_epoch_metrics:
+            return
+        losses = torch.stack([item[0] for item in self._train_epoch_metrics]).mean().item()
+        accs = torch.stack([item[1] for item in self._train_epoch_metrics]).mean().item()
+        self.history["train_loss"].append(losses)
+        self.history["train_acc"].append(accs)
 
     def validation_step(self, batch, batch_idx):
-        X, y = batch[:2]
+        X, y = batch
         logits = self(X)
         loss = self.criterion(logits, y)
         preds = logits.argmax(dim=1)
         acc = (preds == y).float().mean()
-        return {"val_loss": loss, "val_acc": acc}
-    
 
-    def validation_epoch_end(self, outputs):
-        avg_val_loss = torch.stack([x["val_loss"] for x in outputs]).mean().item()
-        avg_val_acc = torch.stack([x["val_acc"] for x in outputs]).mean().item()
-        self.history["val_loss"].append(avg_val_loss)
-        self.history["val_acc"].append(avg_val_acc)
-        if "train_loss" in self.history:
-            self.history["train_loss"].append(0)
-            self.history["train_acc"].append(0)
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=y.size(0),
+        )
+        self.log(
+            "val_acc",
+            acc,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            batch_size=y.size(0),
+        )
+
+        self._val_epoch_metrics.append((loss.detach(), acc.detach()))
+        return loss
+
+    def on_validation_epoch_end(self):
+        if not self._val_epoch_metrics:
+            return
+        losses = torch.stack([item[0] for item in self._val_epoch_metrics]).mean().item()
+        accs = torch.stack([item[1] for item in self._val_epoch_metrics]).mean().item()
+        self.history["val_loss"].append(losses)
+        self.history["val_acc"].append(accs)
 
 
     def configure_optimizers(self):
@@ -103,14 +146,18 @@ def get_trainer(
 
     csv_logger = CSVLogger(save_dir=outdir, name="logs")
 
+    activities = [ProfilerActivity.CPU]
+    if torch.cuda.is_available():
+        activities.append(ProfilerActivity.CUDA)
+
     profiler = PyTorchProfiler(
         dirpath=outdir,
         filename="profiler_trace.json",
         schedule=None,
-        activities=["cpu", "cuda"],
+        activities=activities,
         record_shapes=True,
         profile_memory=True,
-        with_stack=True
+        with_stack=True,
     )
 
     trainer = pl.Trainer(
@@ -120,7 +167,7 @@ def get_trainer(
         log_every_n_steps=10,
         logger=csv_logger,
         default_root_dir=outdir,
-        profiler=profiler
+        profiler=profiler,
     )
 
     return trainer
