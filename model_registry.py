@@ -1,0 +1,120 @@
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Tuple
+
+import torch
+
+from models import (
+    FrameAggregation2D,
+    LateFusion2D,
+    Simple2DCNN,
+    Simple3DCNN,
+    TwoStream2D,
+)
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    name: str
+    build_fn: Callable[[int, int], torch.nn.Module]
+    input_type: str
+    requires_flow: bool = False
+    description: str = ""
+
+
+MODEL_REGISTRY: Dict[str, ModelSpec] = {
+    "simple2dcnn": ModelSpec(
+        name="Simple2DCNN",
+        build_fn=lambda num_classes, _num_frames: Simple2DCNN(num_classes=num_classes),
+        input_type="frames_flat",
+        description="2D CNN that processes frames independently.",
+    ),
+    "simple3dcnn": ModelSpec(
+        name="Simple3DCNN",
+        build_fn=lambda num_classes, _num_frames: Simple3DCNN(num_classes=num_classes, in_channels=3),
+        input_type="clip_3d",
+        description="3D CNN operating on spatio-temporal volumes.",
+    ),
+    "frameaggregation2d": ModelSpec(
+        name="FrameAggregation2D",
+        build_fn=lambda num_classes, num_frames: FrameAggregation2D(num_classes=num_classes, num_frames=num_frames),
+        input_type="clip",
+        description="Aggregates frame features with a 2D backbone.",
+    ),
+    "latefusion2d": ModelSpec(
+        name="LateFusion2D",
+        build_fn=lambda num_classes, num_frames: LateFusion2D(
+            num_classes=num_classes,
+            num_frames=num_frames,
+        ),
+        input_type="late_fusion",
+        requires_flow=False,
+        description="Late fusion of per-frame RGB features without optical flow.",
+    ),
+    "twostream2d": ModelSpec(
+        name="TwoStream2D",
+        build_fn=lambda num_classes, _num_frames: TwoStream2D(num_classes=num_classes),
+        input_type="two_stream",
+        requires_flow=True,
+        description="Two-stream architecture combining RGB and flow predictions.",
+    ),
+}
+
+
+def available_models() -> Tuple[str, ...]:
+    return tuple(MODEL_REGISTRY.keys())
+
+
+def resolve_model(name: str) -> ModelSpec:
+    key = name.lower()
+    if key not in MODEL_REGISTRY:
+        raise KeyError(
+            f"Unknown model '{name}'. Available options: {', '.join(MODEL_REGISTRY.keys())}"
+        )
+    return MODEL_REGISTRY[key]
+
+
+def build_collate_fn(input_type: str) -> Callable[[Tuple[Dict[str, torch.Tensor], ...]], Tuple[Any, torch.Tensor]]:
+    def collate(batch):
+        rgb = torch.stack([item["rgb"] for item in batch], dim=0)
+        labels = torch.stack([item["label"] for item in batch], dim=0)
+
+        if input_type in {"frames_flat"}:
+            batch_size, num_frames, channels, height, width = rgb.shape
+            merged = rgb.view(batch_size * num_frames, channels, height, width)
+            tiled_labels = labels.unsqueeze(1).expand(-1, num_frames).reshape(-1)
+            return merged, tiled_labels
+
+        if input_type == "clip":
+            return rgb, labels
+
+        if input_type == "clip_3d":
+            rgb_3d = rgb.permute(0, 2, 1, 3, 4)  # B, C, T, H, W
+            return rgb_3d, labels
+
+        if input_type == "two_stream":
+            missing_flow = [idx for idx, item in enumerate(batch) if "flow" not in item]
+            if missing_flow:
+                raise ValueError(
+                    "Optical flow data is required for this model but missing for samples: "
+                    + ", ".join(map(str, missing_flow))
+                )
+
+            flow = torch.stack([item["flow"] for item in batch], dim=0)
+
+            if flow.size(1) > 1:
+                flow = flow[:, :-1, ...]
+            return (rgb, flow), labels
+
+        if input_type == "late_fusion":
+            batch_size, num_frames, channels, height, width = rgb.shape
+            rgb_flat = rgb.view(batch_size * num_frames, channels, height, width)
+            inputs = {
+                "rgb": rgb_flat,
+                "batch_size": batch_size,
+                "num_frames": num_frames,
+            }
+            return inputs, labels
+
+        raise ValueError(f"Unsupported input_type '{input_type}'.")
+
+    return collate

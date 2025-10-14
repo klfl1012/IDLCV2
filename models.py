@@ -36,7 +36,7 @@ class Simple2DCNN(nn.Module):
 
 class Simple3DCNN(nn.Module):
 
-    def __init__(self, num_classes=None, in_channels=1):
+    def __init__(self, num_classes=None, in_channels=3):
         super(Simple3DCNN, self).__init__()
         self.conv1 = nn.Conv3d(in_channels, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm3d(64)
@@ -45,10 +45,10 @@ class Simple3DCNN(nn.Module):
         self.conv2 = nn.Conv3d(64, 128, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm3d(128)
         self.pool2 = nn.MaxPool3d(2)
-        
+
         self.conv3 = nn.Conv3d(128, 256, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm3d(256)
-        self.pool3 = nn.MaxPool3d((1, 1, 1))
+        self.pool3 = nn.AdaptiveAvgPool3d(1)
 
         self.features = nn.Sequential(
             self.conv1, self.bn1, nn.ReLU(), self.pool1,
@@ -68,7 +68,7 @@ class Simple3DCNN(nn.Module):
     
 
 class FrameAggregation2D(nn.Module):
-    def __init__(self, num_classes, in_channels=3, num_frames=8):
+    def __init__(self, num_classes, in_channels=3, num_frames=10):
         super().__init__()
         self.backbone = Simple2DCNN(num_classes=None, in_channels=in_channels * num_frames)
         self.fc = nn.Linear(256, num_classes)
@@ -81,25 +81,27 @@ class FrameAggregation2D(nn.Module):
 
 
 class LateFusion2D(nn.Module):
-    def __init__(self, num_classes):
+
+    def __init__(self, num_classes: int, num_frames: int):
         super().__init__()
-        # Feature extractors (no classification head)
-        self.rgb_model = Simple2DCNN(num_classes=None)
+        self.num_frames = num_frames
+        self.backbone = Simple2DCNN(num_classes=None)
+        self.classifier = nn.Linear(256, num_classes)
 
-        # Final fusion classifier
-        self.fc = nn.Linear(10 * 256, num_classes)
+    def forward(self, *, rgb: torch.Tensor, batch_size: int, num_frames: int):
+        batch_size = int(batch_size)
+        num_frames = int(num_frames) if num_frames else self.num_frames
 
-    def forward(self, rgb, flow):
-        B, T, C, H, W = rgb.shape
+        expected = batch_size * num_frames
+        if rgb.size(0) != expected:
+            raise ValueError(
+                f"LateFusion2D expected {expected} RGB frames (batch_size={batch_size}, "
+                f"num_frames={num_frames}), but received tensor with shape {tuple(rgb.shape)}"
+            )
 
-        # Flatten temporal dimension
-        rgb = rgb.view(B * T, C, H, W)
-
-        # Extract per-frame features
-        rgb_feats = self.rgb_model(rgb).view(B, T, -1).mean(dim=1)
-
-        # Fuse modalities
-        return self.fc(rgb_feats)
+        feats = self.backbone(rgb)
+        feats = feats.view(batch_size, num_frames, -1).mean(dim=1)
+        return self.classifier(feats)
 
 class TwoStream2D(nn.Module):
 

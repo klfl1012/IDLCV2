@@ -35,6 +35,10 @@ class LitClassifier(pl.LightningModule):
         self._train_epoch_metrics = []
         self._val_epoch_metrics = []
     def forward(self, x):
+        if isinstance(x, dict):
+            return self.model(**x)
+        if isinstance(x, (tuple, list)):
+            return self.model(*x)
         return self.model(x)
 
     def on_train_epoch_start(self):
