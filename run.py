@@ -1,6 +1,6 @@
 import argparse
 from pathlib import Path
-
+import ast
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -57,8 +57,20 @@ def describe_batch(inputs, labels, prefix: str) -> None:
 	print(f"  labels: shape={tuple(labels.shape)}, dtype={labels.dtype}")
 
 
-def main():
+def build_args() -> argparse.Namespace:
 	parser = argparse.ArgumentParser(description="Train a video model on UCF-like data.")
+	parser = argparse.ArgumentParser(description="Train a video model on UCF-like data.")
+	parser.add_argument("--num-classes", type=int, default=10, help="Number of target classes.")
+	parser.add_argument("--num-frames", type=int, default=10, help="Frames sampled per clip.")
+	parser.add_argument("--batch-size", type=int, default=8, help="Training batch size (clips).")
+	parser.add_argument("--num-workers", type=int, default=4, help="DataLoader worker count.")
+	parser.add_argument("--outdir", type=str, default="./results", help="Output directory for logs and checkpoints.")
+	parser.add_argument("--seed", type=int, default=21, help="Random seed for reproducibility.")
+	parser.add_argument("--max-epochs", type=int, default=5, help="Maximum training epochs.")
+	parser.add_argument("--optimizer", type=str, default="adamw", help="Optimizer to use (adamw or sgd).")
+	parser.add_argument("--optimizer-kwargs", type=str, default="{}", help="Optimizer keyword arguments as a dictionary string.")
+	parser.add_argument("--scheduler", type=str, default="reduce_on_plateau", help="Learning rate scheduler to use (reduce_on_plateau or step).")
+	parser.add_argument("--scheduler-kwargs", type=str, default="{}", help="Scheduler keyword arguments as a dictionary string.")
 	parser.add_argument(
 		"--dataset-root",
 		type=str,
@@ -72,10 +84,6 @@ def main():
 		choices=available_models(),
 		help="Model architecture to train (defined in models.py).",
 	)
-	parser.add_argument("--num-classes", type=int, default=10, help="Number of target classes.")
-	parser.add_argument("--num-frames", type=int, default=10, help="Frames sampled per clip.")
-	parser.add_argument("--batch-size", type=int, default=8, help="Training batch size (clips).")
-	parser.add_argument("--num-workers", type=int, default=4, help="DataLoader worker count.")
 	parser.add_argument(
 		"--flow-format",
 		type=str,
@@ -88,22 +96,54 @@ def main():
 		action="store_true",
 		help="Force optical flow loading even for models that do not require it.",
 	)
-	parser.add_argument("--max-epochs", type=int, default=5, help="Maximum training epochs.")
 	parser.add_argument(
 		"--early-stopping-patience",
 		type=int,
 		default=10,
 		help="Early stopping patience on validation loss.",
 	)
-	parser.add_argument("--outdir", type=str, default="./results", help="Output directory for logs and checkpoints.")
-	parser.add_argument("--seed", type=int, default=21, help="Random seed for reproducibility.")
 	parser.add_argument(
 		"--no-preview",
 		action="store_true",
 		help="Disable printing of example batch shapes before training.",
 	)
 
-	args = parser.parse_args()
+	return parser.parse_args()
+
+
+def parse_dict_arg(arg_value: str, arg_name: str) -> dict:
+	try:
+		result = ast.literal_eval(arg_value)
+		if not isinstance(result, dict):
+			raise ValueError()
+		return result
+	except Exception:
+		raise ValueError(f"{arg_name} must be a dictionary string, e.g., \"{{'lr': 0.001, 'weight_decay': 0.01}}\"")
+
+
+def get_optimizer_class(name: str):
+	name = name.lower()
+	if name not in {"adamw", "sgd"}:
+		raise ValueError("Unsupported optimizer. Choose 'adamw' or 'sgd'.")
+	return getattr(torch.optim, name.capitalize())
+
+
+def get_scheduler_class(name: str):
+	name = name.lower()
+	schedulers = {
+		"reduce_on_plateau": torch.optim.lr_scheduler.ReduceLROnPlateau,
+		"step": torch.optim.lr_scheduler.StepLR,
+	}
+	if name not in schedulers:
+		raise ValueError("Unsupported scheduler. Choose 'reduce_on_plateau' or 'step'.")
+	return schedulers[name]
+
+
+
+
+
+def main():
+	args = build_args()
 
 	pl.seed_everything(args.seed, workers=True)
 
@@ -144,10 +184,18 @@ def main():
 
 	model = spec.build_fn(args.num_classes, args.num_frames)
 	criterion = nn.CrossEntropyLoss()
-	optimizer_class = torch.optim.AdamW
-	optimizer_kwargs = {"lr": 1e-3, "weight_decay": 1e-2}
-	scheduler_class = torch.optim.lr_scheduler.ReduceLROnPlateau
-	scheduler_params = {"mode": "min", "factor": 0.1, "patience": 5}
+
+	optimizer_kwargs = parse_dict_arg(args.optimizer_kwargs, "optimizer-kwargs")
+	scheduler_kwargs = parse_dict_arg(args.scheduler_kwargs, "scheduler-kwargs")
+	optimizer_class = get_optimizer_class(args.optimizer)
+	scheduler_class = get_scheduler_class(args.scheduler)
+
+	if not scheduler_kwargs:
+		defaults = {
+			"step": {"step_size": 10, "gamma": 0.1},
+			"reduce_on_plateau": {"mode": "min", "factor": 0.1, "patience": 5},
+		}
+		scheduler_kwargs = defaults.get(args.scheduler.lower(), {})
 
 	litmodel = LitClassifier(
 		model=model,
@@ -155,7 +203,7 @@ def main():
 		optimizer_class=optimizer_class,
 		optimizer_params=optimizer_kwargs,
 		scheduler_class=scheduler_class,
-		scheduler_params=scheduler_params,
+		scheduler_params=scheduler_kwargs,
 		outdir=args.outdir,
 	)
 

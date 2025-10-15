@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Callable, Dict, Tuple, Sequence
 
 import torch
 
@@ -73,8 +73,9 @@ def resolve_model(name: str) -> ModelSpec:
     return MODEL_REGISTRY[key]
 
 
-def build_collate_fn(input_type: str) -> Callable[[Tuple[Dict[str, torch.Tensor], ...]], Tuple[Any, torch.Tensor]]:
-    def collate(batch):
+def build_collate_fn(input_type: str) -> Callable[[Sequence[Tuple[Dict[str, torch.Tensor], torch.Tensor]]], Tuple[Any, torch.Tensor]]:
+    # -> Callable[[Tuple[Dict[str, torch.Tensor], ...]], Tuple[Any, torch.Tensor]]:
+    def collate(batch) -> Tuple[Any, torch.Tensor]:
         rgb = torch.stack([item["rgb"] for item in batch], dim=0)
         labels = torch.stack([item["label"] for item in batch], dim=0)
 
