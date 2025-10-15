@@ -2,10 +2,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torchvision import models
+
+
 class Simple2DCNN(nn.Module):
 
-    def __init__(self, num_classes=None, in_channels=3):
+    def __init__(self, num_classes=None, in_channels=3, pretrained_vgg=False, freeze_backbone=False, vgg_variant="vgg16"):
         super(Simple2DCNN, self).__init__()
+        self.pretrained_vgg = pretrained_vgg
+        self.in_channels = in_channels
+
         self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
         self.pool1 = nn.MaxPool2d(2)
@@ -25,6 +31,28 @@ class Simple2DCNN(nn.Module):
         )
 
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
+
+        if self.pretrained_vgg:
+            if in_channels !=3:
+                raise ValueError("Pretrained VGG only supports 3 input channels.")
+            try:
+                weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
+                vgg = getattr(models, vgg_variant)(weights=weights)
+            
+            except Exception:
+                vgg = getattr(models, vgg_variant)(pretrained=True)
+
+            vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
+            target_convs = [self.conv1, self.conv2, self.conv3]
+            for src, dst in zip(vgg_convs[:3], target_convs):
+                if src.weight.shape == dst.weight.shape:
+                    dst.weight.data.copy_(src.weight.data)
+                    if src.bias is not None and dst.bias is not None:
+                        src.bias.data.copy_(src.bias.data)
+
+            if freeze_backbone:
+                for p in self.features.parameters():
+                    p.requires_grad = False
 
     def forward(self, x):
         x = self.features(x)
@@ -82,10 +110,10 @@ class FrameAggregation2D(nn.Module):
 
 class LateFusion2D(nn.Module):
 
-    def __init__(self, num_classes: int, num_frames: int):
+    def __init__(self, num_classes: int, num_frames: int, pretrained_vgg: bool = False):
         super().__init__()
         self.num_frames = num_frames
-        self.backbone = Simple2DCNN(num_classes=None)
+        self.backbone = Simple2DCNN(num_classes=None, pretrained_vgg=pretrained_vgg)
         self.classifier = nn.Linear(2560, num_classes)
 
     def forward(self, *, rgb: torch.Tensor, batch_size: int, num_frames: int):
@@ -105,9 +133,9 @@ class LateFusion2D(nn.Module):
 
 class TwoStream2D(nn.Module):
 
-    def __init__(self, num_classes):
+    def __init__(self, num_classes: int = 10, pretrained_vgg: bool = False):
         super().__init__()
-        self.rgb_model = Simple2DCNN(num_classes=10)
+        self.rgb_model = Simple2DCNN(num_classes=10, pretrained_vgg=True)
         self.flow_model = Simple2DCNN(num_classes=10, in_channels=18)
 
     def forward(self, rgb, flow):
