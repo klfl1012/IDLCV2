@@ -36,6 +36,14 @@ class LitClassifier(pl.LightningModule):
         self._val_epoch_metrics = []
     def forward(self, x):
         if isinstance(x, dict):
+            if "frames" in x:
+                frames = x["frames"]
+                batch_size = x.get("batch_size")
+                num_frames = x.get("num_frames")
+                logits = self.model(frames)
+                if batch_size is not None and num_frames is not None:
+                    logits = logits.view(batch_size, num_frames, -1).mean(dim=1)
+                return logits
             return self.model(**x)
         if isinstance(x, (tuple, list)):
             return self.model(*x)

@@ -81,8 +81,12 @@ def build_collate_fn(input_type: str) -> Callable[[Tuple[Dict[str, torch.Tensor]
         if input_type in {"frames_flat"}:
             batch_size, num_frames, channels, height, width = rgb.shape
             merged = rgb.view(batch_size * num_frames, channels, height, width)
-            tiled_labels = labels.unsqueeze(1).expand(-1, num_frames).reshape(-1)
-            return merged, tiled_labels
+            inputs = {
+                "frames": merged,
+                "batch_size": batch_size,
+                "num_frames": num_frames,
+            }
+            return inputs, labels
 
         if input_type == "clip":
             return rgb, labels

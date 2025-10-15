@@ -86,7 +86,7 @@ class LateFusion2D(nn.Module):
         super().__init__()
         self.num_frames = num_frames
         self.backbone = Simple2DCNN(num_classes=None)
-        self.classifier = nn.Linear(256, num_classes)
+        self.classifier = nn.Linear(2560, num_classes)
 
     def forward(self, *, rgb: torch.Tensor, batch_size: int, num_frames: int):
         batch_size = int(batch_size)
@@ -100,7 +100,7 @@ class LateFusion2D(nn.Module):
             )
 
         feats = self.backbone(rgb)
-        feats = feats.view(batch_size, num_frames, -1).mean(dim=1)
+        feats = feats.view(batch_size, -1)
         return self.classifier(feats)
 
 class TwoStream2D(nn.Module):
@@ -108,21 +108,24 @@ class TwoStream2D(nn.Module):
     def __init__(self, num_classes):
         super().__init__()
         self.rgb_model = Simple2DCNN(num_classes=10)
-        self.flow_model = Simple2DCNN(num_classes=10)
+        self.flow_model = Simple2DCNN(num_classes=10, in_channels=18)
 
     def forward(self, rgb, flow):
-        B, T, C, H, W = rgb.shape
+        B, Tr, Cr, Hr, Wr = rgb.shape
+        B, Tf, Cf, Hf, Wf = flow.shape
+        # print(rgb.shape, flow.shape)
 
         # Flatten temporal dimension
-        rgb = rgb.view(B * T, C, H, W)
-        flow = flow.view(B, (T - 1) * C, H, W)
+        rgb = rgb.view(B * Tr, Cr, Hr, Wr)
+        flow = flow.view(B, Tf * Cf, Hf, Wf)
 
         #softmax on both streams
-        rgb_feats = self.rgb_model(rgb).view(B, T, -1)
-        flow_feats = self.flow_model(flow).view(B, T - 1, -1)
+        rgb_feats = self.rgb_model(rgb).view(B, Tr, -1)
+        flow_feats = self.flow_model(flow).view(B, -1)
 
         rgb_feats = F.softmax(rgb_feats, dim=-1)
+        #average rgb over time
+        rgb_feats = rgb_feats.mean(dim=1)
         flow_feats = F.softmax(flow_feats, dim=-1)
-
         return rgb_feats + flow_feats
 
