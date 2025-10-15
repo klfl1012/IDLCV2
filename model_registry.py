@@ -75,7 +75,7 @@ def resolve_model(name: str) -> ModelSpec:
 
 def build_collate_fn(input_type: str) -> Callable[[Sequence[Tuple[Dict[str, torch.Tensor], torch.Tensor]]], Tuple[Any, torch.Tensor]]:
     # -> Callable[[Tuple[Dict[str, torch.Tensor], ...]], Tuple[Any, torch.Tensor]]:
-    def collate(batch) -> Tuple[Any, torch.Tensor]:
+    def _collate_fn(batch) -> Tuple[Any, torch.Tensor]:
         rgb = torch.stack([item["rgb"] for item in batch], dim=0)
         labels = torch.stack([item["label"] for item in batch], dim=0)
 
@@ -122,4 +122,4 @@ def build_collate_fn(input_type: str) -> Callable[[Sequence[Tuple[Dict[str, torc
 
         raise ValueError(f"Unsupported input_type '{input_type}'.")
 
-    return collate
+    return _collate_fn
