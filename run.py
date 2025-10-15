@@ -67,7 +67,7 @@ def build_args() -> argparse.Namespace:
 	parser.add_argument("--outdir", type=str, default="./results", help="Output directory for logs and checkpoints.")
 	parser.add_argument("--seed", type=int, default=21, help="Random seed for reproducibility.")
 	parser.add_argument("--max-epochs", type=int, default=5, help="Maximum training epochs.")
-	parser.add_argument("--optimizer", type=str, default="adamw", help="Optimizer to use (adamw or sgd).")
+	parser.add_argument("--optimizer", type=str, default="AdamW", help="Optimizer to use (adamw or sgd).")
 	parser.add_argument("--optimizer-kwargs", type=str, default="{}", help="Optimizer keyword arguments as a dictionary string.")
 	parser.add_argument("--scheduler", type=str, default="reduce_on_plateau", help="Learning rate scheduler to use (reduce_on_plateau or step).")
 	parser.add_argument("--scheduler-kwargs", type=str, default="{}", help="Scheduler keyword arguments as a dictionary string.")
@@ -122,10 +122,14 @@ def parse_dict_arg(arg_value: str, arg_name: str) -> dict:
 
 
 def get_optimizer_class(name: str):
-	name = name.lower()
-	if name not in {"adamw", "sgd"}:
+	name_lower = name.lower()
+	mapping = {
+		"adamw": "AdamW",
+		"sgd": "SGD",
+	}
+	if name_lower not in mapping:
 		raise ValueError("Unsupported optimizer. Choose 'adamw' or 'sgd'.")
-	return getattr(torch.optim, name.capitalize())
+	return getattr(torch.optim, mapping[name_lower])
 
 
 def get_scheduler_class(name: str):
