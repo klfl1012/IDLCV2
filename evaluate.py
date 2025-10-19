@@ -1,6 +1,7 @@
 import argparse
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import torch
 from torch.utils.data import DataLoader
@@ -8,6 +9,18 @@ from torch.utils.data import DataLoader
 from dataloader import UCFLikeDataset, load_ucf_metadata_split
 from litmodel import LitClassifier
 from model_registry import available_models, build_collate_fn, resolve_model
+
+
+def _move_to_device(data: Union[torch.Tensor, dict, tuple, list], device: torch.device):
+    if isinstance(data, torch.Tensor):
+        return data.to(device, non_blocking=True)
+    if isinstance(data, dict):
+        return {k: _move_to_device(v, device) if isinstance(v, (torch.Tensor, dict, list, tuple)) else v for k, v in data.items()}
+    if isinstance(data, tuple):
+        return tuple(_move_to_device(x, device) for x in data)
+    if isinstance(data, list):
+        return [_move_to_device(x, device) for x in data]
+    return data
 
 
 def evaluate(
@@ -21,7 +34,9 @@ def evaluate(
     use_flow: bool = False,
     flow_format: str = "npy",
     input_type: str = "frames_flat",
+    pretrained_vgg: bool = False,
     device: Optional[torch.device] = None,
+    save_path: Optional[Path] = None,
 ) -> dict:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -48,7 +63,10 @@ def evaluate(
     )
 
     model_spec = resolve_model(model_name)
-    model = model_spec.build_fn(num_classes, num_frames)
+    model_kwargs = {}
+    if model_spec.name.lower() in {"simple2dcnn", "simple3dcnn", "latefusion2d", "twostream2d", "frameaggregation2d"}:
+        model_kwargs["pretrained_vgg"] = pretrained_vgg
+    model = model_spec.build_fn(num_classes, num_frames, **model_kwargs)
     criterion = torch.nn.CrossEntropyLoss()
     optimizer_class = torch.optim.AdamW
     optimizer_params = {"lr": 1e-3, "weight_decay": 1e-2}
@@ -75,7 +93,7 @@ def evaluate(
 
     with torch.no_grad():
         for inputs, labels in test_loader:
-            inputs = inputs.to(device, non_blocking=True)
+            inputs = _move_to_device(inputs, device)
             labels = labels.to(device, non_blocking=True)
 
             logits = lit_model(inputs)
@@ -89,11 +107,29 @@ def evaluate(
     avg_loss = total_loss / max(total_samples, 1)
     accuracy = total_correct / max(total_samples, 1)
 
-    return {
+    metrics = {
         "loss": avg_loss,
         "accuracy": accuracy,
         "samples": total_samples,
     }
+
+    if save_path is not None:
+        save_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "metrics": metrics,
+            "checkpoint": str(checkpoint_path),
+            "model": model_name,
+            "num_classes": num_classes,
+            "num_frames": num_frames,
+            "batch_size": batch_size,
+            "use_flow": use_flow,
+            "flow_format": flow_format,
+            "pretrained_vgg": pretrained_vgg,
+        }
+        with save_path.open("w", encoding="utf-8") as fp:
+            json.dump(payload, fp, indent=2)
+
+    return metrics
 
 
 def main():
@@ -133,6 +169,17 @@ def main():
         choices=["npy", "png"],
         help="Storage format for optical flow frames.",
     )
+    parser.add_argument(
+        "--pretrained-vgg",
+        action="store_true",
+        help="Use ImageNet-pretrained VGG weights for applicable CNN backbones.",
+    )
+    parser.add_argument(
+        "--metrics-out",
+        type=Path,
+        default=None,
+        help="Optional path to save evaluation metrics as JSON.",
+    )
 
     args = parser.parse_args()
 
@@ -150,13 +197,17 @@ def main():
         use_flow=use_flow,
         flow_format=args.flow_format,
         input_type=model_spec.input_type,
+        pretrained_vgg=args.pretrained_vgg,
         device=device,
+        save_path=args.metrics_out,
     )
 
     print("Evaluation results:")
     print(f"  samples:  {metrics['samples']}")
     print(f"  loss:     {metrics['loss']:.4f}")
     print(f"  accuracy: {metrics['accuracy'] * 100:.2f}%")
+    if args.metrics_out is not None:
+        print(f"  saved to: {args.metrics_out}")
 
 
 if __name__ == "__main__":

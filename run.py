@@ -107,6 +107,11 @@ def build_args() -> argparse.Namespace:
 		action="store_true",
 		help="Disable printing of example batch shapes before training.",
 	)
+	parser.add_argument(
+		"--pretrained-vgg",
+		action="store_true",
+		help="Use ImageNet-pretrained VGG weights for applicable CNN backbones.",
+	)
 
 	return parser.parse_args()
 
@@ -186,7 +191,10 @@ def main():
 		val_inputs, val_labels = next(iter(val_loader))
 		describe_batch(val_inputs, val_labels, "Preview val batch:")
 
-	model = spec.build_fn(args.num_classes, args.num_frames)
+	model_kwargs = {}
+	if spec.name.lower() in {"simple2dcnn", "simple3dcnn", "latefusion2d", "twostream2d", "frameaggregation2d"}:
+		model_kwargs["pretrained_vgg"] = args.pretrained_vgg
+	model = spec.build_fn(args.num_classes, args.num_frames, **model_kwargs)
 	criterion = nn.CrossEntropyLoss()
 
 	optimizer_kwargs = parse_dict_arg(args.optimizer_kwargs, "optimizer-kwargs")
