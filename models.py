@@ -46,8 +46,30 @@ class Simple2DCNN(nn.Module):
 
             vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
             target_convs = [self.conv1, self.conv2, self.conv3]
-            for idx, (src, dst) in enumerate(zip(vgg_convs[:3], target_convs)):
-                src_weight = src.weight.data
+
+            src_idx = 0
+            for idx, dst in enumerate(target_convs):
+                matched = None
+                while src_idx < len(vgg_convs):
+                    candidate = vgg_convs[src_idx]
+                    src_idx += 1
+                    if idx == 0:
+                        # First conv layer: accept any conv with matching output channels.
+                        if candidate.out_channels == dst.out_channels:
+                            matched = candidate
+                            break
+                    else:
+                        if (
+                            candidate.out_channels == dst.out_channels
+                            and candidate.in_channels == dst.in_channels
+                        ):
+                            matched = candidate
+                            break
+
+                if matched is None:
+                    raise RuntimeError("Unable to find matching VGG conv layer for Simple2DCNN.")
+
+                src_weight = matched.weight.data
                 if idx == 0 and dst.weight.shape[1] != src_weight.shape[1]:
                     print(
                         f"[Simple2DCNN] Expanding first conv weights from {src_weight.shape[1]} to {dst.weight.shape[1]} channels by repetition."
@@ -57,11 +79,11 @@ class Simple2DCNN(nn.Module):
                     for channel in range(repeats):
                         expanded[:, channel, :, :] = src_weight[:, channel % src_weight.shape[1], :, :]
                     dst.weight.data.copy_(expanded)
-                elif src.weight.shape == dst.weight.shape:
+                else:
                     dst.weight.data.copy_(src_weight)
 
-                if src.bias is not None and dst.bias is not None:
-                    dst.bias.data.copy_(src.bias.data)
+                if matched.bias is not None and dst.bias is not None:
+                    dst.bias.data.copy_(matched.bias.data)
 
             if freeze_backbone:
                 for p in self.features.parameters():
