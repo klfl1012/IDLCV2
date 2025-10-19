@@ -33,22 +33,35 @@ class Simple2DCNN(nn.Module):
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
 
         if self.pretrained_vgg:
-            if in_channels !=3:
-                raise ValueError("Pretrained VGG only supports 3 input channels.")
+            if in_channels % 3 != 0:
+                raise ValueError("Pretrained VGG weights require the input channels to be a multiple of 3.")
             try:
+                print(f"[Simple2DCNN] Loading pretrained {vgg_variant.upper()} weights from torchvision...")
                 weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
                 vgg = getattr(models, vgg_variant)(weights=weights)
             
             except Exception:
+                print(f"[Simple2DCNN] Falling back to torchvision pretrained={True} for {vgg_variant}.")
                 vgg = getattr(models, vgg_variant)(pretrained=True)
 
             vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
             target_convs = [self.conv1, self.conv2, self.conv3]
-            for src, dst in zip(vgg_convs[:3], target_convs):
-                if src.weight.shape == dst.weight.shape:
-                    dst.weight.data.copy_(src.weight.data)
-                    if src.bias is not None and dst.bias is not None:
-                        src.bias.data.copy_(src.bias.data)
+            for idx, (src, dst) in enumerate(zip(vgg_convs[:3], target_convs)):
+                src_weight = src.weight.data
+                if idx == 0 and dst.weight.shape[1] != src_weight.shape[1]:
+                    print(
+                        f"[Simple2DCNN] Expanding first conv weights from {src_weight.shape[1]} to {dst.weight.shape[1]} channels by repetition."
+                    )
+                    repeats = dst.weight.shape[1]
+                    expanded = torch.zeros_like(dst.weight.data)
+                    for channel in range(repeats):
+                        expanded[:, channel, :, :] = src_weight[:, channel % src_weight.shape[1], :, :]
+                    dst.weight.data.copy_(expanded)
+                elif src.weight.shape == dst.weight.shape:
+                    dst.weight.data.copy_(src_weight)
+
+                if src.bias is not None and dst.bias is not None:
+                    dst.bias.data.copy_(src.bias.data)
 
             if freeze_backbone:
                 for p in self.features.parameters():
@@ -64,8 +77,16 @@ class Simple2DCNN(nn.Module):
 
 class Simple3DCNN(nn.Module):
 
-    def __init__(self, num_classes=None, in_channels=3):
+    def __init__(
+        self,
+        num_classes=None,
+        in_channels=3,
+        pretrained_vgg: bool = False,
+        freeze_backbone: bool = False,
+        vgg_variant: str = "vgg16",
+    ):
         super(Simple3DCNN, self).__init__()
+        self.pretrained_vgg = pretrained_vgg
         self.conv1 = nn.Conv3d(in_channels, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm3d(64)
         self.pool1 = nn.MaxPool3d(2)
@@ -86,6 +107,49 @@ class Simple3DCNN(nn.Module):
 
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
 
+        if self.pretrained_vgg:
+            if in_channels != 3:
+                raise ValueError("Simple3DCNN pretrained VGG initialization requires in_channels=3.")
+            try:
+                print(f"[Simple3DCNN] Loading pretrained {vgg_variant.upper()} weights from torchvision...")
+                weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
+                vgg = getattr(models, vgg_variant)(weights=weights)
+            except Exception:
+                print(f"[Simple3DCNN] Falling back to torchvision pretrained={True} for {vgg_variant}.")
+                vgg = getattr(models, vgg_variant)(pretrained=True)
+
+            vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
+            target_convs = [self.conv1, self.conv2, self.conv3]
+            print("[Simple3DCNN] Inflating 2D VGG kernels into 3D convolutions.")
+            src_idx = 0
+            for dst in target_convs:
+                matched = None
+                while src_idx < len(vgg_convs):
+                    candidate = vgg_convs[src_idx]
+                    src_idx += 1
+                    if (
+                        candidate.out_channels == dst.out_channels
+                        and candidate.in_channels == dst.in_channels
+                    ):
+                        matched = candidate
+                        break
+
+                if matched is None:
+                    raise RuntimeError(
+                        "Unable to align VGG convolution weights with Simple3DCNN layers."
+                    )
+
+                weight_2d = matched.weight.data  # (out_c, in_c, k, k)
+                k_t = dst.weight.shape[2]
+                weight_3d = weight_2d.unsqueeze(2).repeat(1, 1, k_t, 1, 1) / k_t
+                dst.weight.data.copy_(weight_3d)
+                if matched.bias is not None and dst.bias is not None:
+                    dst.bias.data.copy_(matched.bias.data)
+
+            if freeze_backbone:
+                for p in self.features.parameters():
+                    p.requires_grad = False
+
     def forward(self, x):
         x = self.features(x)
         x = x.view(x.size(0), -1)
@@ -96,9 +160,14 @@ class Simple3DCNN(nn.Module):
     
 
 class FrameAggregation2D(nn.Module):
-    def __init__(self, num_classes, in_channels=3, num_frames=10):
+    def __init__(self, num_classes, in_channels=3, num_frames=10, pretrained_vgg: bool = False):
         super().__init__()
-        self.backbone = Simple2DCNN(num_classes=None, in_channels=in_channels * num_frames)
+        self.num_frames = num_frames
+        self.backbone = Simple2DCNN(
+            num_classes=None,
+            in_channels=in_channels * num_frames,
+            pretrained_vgg=pretrained_vgg,
+        )
         self.fc = nn.Linear(256, num_classes)
 
     def forward(self, x):
@@ -114,7 +183,7 @@ class LateFusion2D(nn.Module):
         super().__init__()
         self.num_frames = num_frames
         self.backbone = Simple2DCNN(num_classes=None, pretrained_vgg=pretrained_vgg)
-        self.classifier = nn.Linear(2560, num_classes)
+        self.classifier = nn.Linear(256 * num_frames, num_classes)
 
     def forward(self, *, rgb: torch.Tensor, batch_size: int, num_frames: int):
         batch_size = int(batch_size)
@@ -135,7 +204,7 @@ class TwoStream2D(nn.Module):
 
     def __init__(self, num_classes: int = 10, pretrained_vgg: bool = False):
         super().__init__()
-        self.rgb_model = Simple2DCNN(num_classes=10, pretrained_vgg=True)
+        self.rgb_model = Simple2DCNN(num_classes=10, pretrained_vgg=pretrained_vgg)
         self.flow_model = Simple2DCNN(num_classes=10, in_channels=18)
 
     def forward(self, rgb, flow):

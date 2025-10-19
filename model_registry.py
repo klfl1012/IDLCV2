@@ -15,7 +15,7 @@ from models import (
 @dataclass(frozen=True)
 class ModelSpec:
     name: str
-    build_fn: Callable[[int, int], torch.nn.Module]
+    build_fn: Callable[..., torch.nn.Module]
     input_type: str
     requires_flow: bool = False
     description: str = ""
@@ -24,27 +24,32 @@ class ModelSpec:
 MODEL_REGISTRY: Dict[str, ModelSpec] = {
     "simple2dcnn": ModelSpec(
         name="Simple2DCNN",
-        build_fn=lambda num_classes, _num_frames: Simple2DCNN(num_classes=num_classes),
+        build_fn=lambda num_classes, _num_frames, **extras: Simple2DCNN(num_classes=num_classes, **extras),
         input_type="frames_flat",
         description="2D CNN that processes frames independently.",
     ),
     "simple3dcnn": ModelSpec(
         name="Simple3DCNN",
-        build_fn=lambda num_classes, _num_frames: Simple3DCNN(num_classes=num_classes, in_channels=3),
+        build_fn=lambda num_classes, _num_frames, **extras: Simple3DCNN(num_classes=num_classes, **extras),
         input_type="clip_3d",
         description="3D CNN operating on spatio-temporal volumes.",
     ),
     "frameaggregation2d": ModelSpec(
         name="FrameAggregation2D",
-        build_fn=lambda num_classes, num_frames: FrameAggregation2D(num_classes=num_classes, num_frames=num_frames),
+        build_fn=lambda num_classes, num_frames, **extras: FrameAggregation2D(
+            num_classes=num_classes,
+            num_frames=num_frames,
+            **extras,
+        ),
         input_type="clip",
         description="Aggregates frame features with a 2D backbone.",
     ),
     "latefusion2d": ModelSpec(
         name="LateFusion2D",
-        build_fn=lambda num_classes, num_frames: LateFusion2D(
+        build_fn=lambda num_classes, num_frames, **extras: LateFusion2D(
             num_classes=num_classes,
             num_frames=num_frames,
+            **extras,
         ),
         input_type="late_fusion",
         requires_flow=False,
@@ -52,7 +57,7 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
     ),
     "twostream2d": ModelSpec(
         name="TwoStream2D",
-        build_fn=lambda num_classes, _num_frames: TwoStream2D(num_classes=num_classes),
+        build_fn=lambda num_classes, _num_frames, **extras: TwoStream2D(num_classes=num_classes, **extras),
         input_type="two_stream",
         requires_flow=True,
         description="Two-stream architecture combining RGB and flow predictions.",
