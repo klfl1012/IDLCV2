@@ -7,7 +7,15 @@ from torchvision import models
 
 class Simple2DCNN(nn.Module):
 
-    def __init__(self, num_classes=None, in_channels=3, pretrained_vgg=False, freeze_backbone=False, vgg_variant="vgg16"):
+    def __init__(
+        self,
+        num_classes=None,
+        in_channels=3,
+        pretrained_vgg=False,
+        freeze_backbone=False,
+        vgg_variant="vgg16",
+        dropout_p: float = 0.2,
+    ):
         super(Simple2DCNN, self).__init__()
         self.pretrained_vgg = pretrained_vgg
         self.in_channels = in_channels
@@ -15,22 +23,38 @@ class Simple2DCNN(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm2d(64)
         self.pool1 = nn.MaxPool2d(2)
+        self.dropout1 = nn.Dropout2d(p=dropout_p)
         
         self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm2d(128)
         self.pool2 = nn.MaxPool2d(2)
+        self.dropout2 = nn.Dropout2d(p=dropout_p)
         
         self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm2d(256)
         self.pool3 = nn.AdaptiveAvgPool2d(1)
+        self.dropout3 = nn.Dropout2d(p=dropout_p)
 
         self.features = nn.Sequential(
-            self.conv1, self.bn1, nn.ReLU(), self.pool1,
-            self.conv2, self.bn2, nn.ReLU(), self.pool2,
-            self.conv3, self.bn3, nn.ReLU(), self.pool3
+            self.conv1,
+            self.bn1,
+            nn.ReLU(),
+            self.pool1,
+            self.dropout1,
+            self.conv2,
+            self.bn2,
+            nn.ReLU(),
+            self.pool2,
+            self.dropout2,
+            self.conv3,
+            self.bn3,
+            nn.ReLU(),
+            self.pool3,
+            self.dropout3,
         )
 
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
+        self.classifier_dropout = nn.Dropout(p=dropout_p)
 
         if self.pretrained_vgg:
             if in_channels % 3 != 0:
@@ -93,6 +117,7 @@ class Simple2DCNN(nn.Module):
         x = self.features(x)
         x = x.view(x.size(0), -1)
         if self.fc1:
+            x = self.classifier_dropout(x)
             return self.fc1(x)
         return x
     
@@ -106,28 +131,45 @@ class Simple3DCNN(nn.Module):
         pretrained_vgg: bool = False,
         freeze_backbone: bool = False,
         vgg_variant: str = "vgg16",
+        dropout_p: float = 0.2,
     ):
         super(Simple3DCNN, self).__init__()
         self.pretrained_vgg = pretrained_vgg
         self.conv1 = nn.Conv3d(in_channels, 64, kernel_size=3, padding=1)
         self.bn1 = nn.BatchNorm3d(64)
         self.pool1 = nn.MaxPool3d(2)
+        self.dropout1 = nn.Dropout3d(p=dropout_p)
         
         self.conv2 = nn.Conv3d(64, 128, kernel_size=3, padding=1)
         self.bn2 = nn.BatchNorm3d(128)
         self.pool2 = nn.MaxPool3d(2)
+        self.dropout2 = nn.Dropout3d(p=dropout_p)
 
         self.conv3 = nn.Conv3d(128, 256, kernel_size=3, padding=1)
         self.bn3 = nn.BatchNorm3d(256)
         self.pool3 = nn.AdaptiveAvgPool3d(1)
+        self.dropout3 = nn.Dropout3d(p=dropout_p)
 
         self.features = nn.Sequential(
-            self.conv1, self.bn1, nn.ReLU(), self.pool1,
-            self.conv2, self.bn2, nn.ReLU(), self.pool2,
-            self.conv3, self.bn3, nn.ReLU(), self.pool3
+            self.conv1,
+            self.bn1,
+            nn.ReLU(),
+            self.pool1,
+            self.dropout1,
+            self.conv2,
+            self.bn2,
+            nn.ReLU(),
+            self.pool2,
+            self.dropout2,
+            self.conv3,
+            self.bn3,
+            nn.ReLU(),
+            self.pool3,
+            self.dropout3,
         )
 
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
+        self.classifier_dropout = nn.Dropout(p=dropout_p)
 
         if self.pretrained_vgg:
             if in_channels != 3:
@@ -176,6 +218,7 @@ class Simple3DCNN(nn.Module):
         x = self.features(x)
         x = x.view(x.size(0), -1)
         if self.fc1:
+            x = self.classifier_dropout(x)
             return self.fc1(x)
         return x
   

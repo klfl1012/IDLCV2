@@ -12,11 +12,33 @@ from torchvision import transforms
 _DEFAULT_FRAME_SIZE = (112, 112)
 
 
-def _default_frame_transform() -> Callable[[Image.Image], torch.Tensor]:
-    return transforms.Compose([
-        transforms.Resize(_DEFAULT_FRAME_SIZE),
-        transforms.ToTensor(),
-    ])
+class _AdditiveGaussianNoise:
+    def __init__(self, mean: float = 0.0, std: float = 0.02):
+        self.mean = float(mean)
+        self.std = float(std)
+
+    def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
+        noise = torch.randn_like(tensor) * self.std + self.mean
+        noisy = tensor + noise
+        return torch.clamp(noisy, 0.0, 1.0)
+
+
+def _default_frame_transform(is_train: bool = False) -> Callable[[Image.Image], torch.Tensor]:
+    steps: List[Callable] = [transforms.Resize(_DEFAULT_FRAME_SIZE)]
+    if is_train:
+        steps.append(
+            transforms.ColorJitter(
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.02,
+            )
+        )
+    steps.append(transforms.ToTensor())
+    if is_train:
+        steps.append(transforms.RandomApply([_AdditiveGaussianNoise(std=0.02)], p=0.5))
+        steps.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.2), ratio=(0.3, 3.3)))
+    return transforms.Compose(steps)
 
 
 def _ensure_dir(path: str, description: str) -> None:
@@ -36,6 +58,7 @@ class UCFLikeDataset(Dataset):
         frame_transform: Optional[Callable[[Image.Image], torch.Tensor]] = None,
         flow_transform: Optional[Callable[[torch.Tensor], torch.Tensor]] = None,
         return_tensor_format: str = "TCHW",
+        is_train: bool = False,
     ) -> None:
         if not manifest:
             raise ValueError("Manifest is empty; ensure metadata CSV paths are correct.")
@@ -50,7 +73,8 @@ class UCFLikeDataset(Dataset):
         self.num_frames = int(num_frames)
         self.use_flow = bool(use_flow)
         self.flow_format = flow_format
-        self.frame_transform = frame_transform or _default_frame_transform()
+        self.is_train = bool(is_train)
+        self.frame_transform = frame_transform or _default_frame_transform(self.is_train)
         self.flow_transform = flow_transform
         self.return_tensor_format = return_tensor_format
 
@@ -71,6 +95,10 @@ class UCFLikeDataset(Dataset):
             idx = list(range(available))
             idx.extend([available - 1] * (self.num_frames - available))
             return idx
+        #temporary change for training
+        if self.is_train:
+            choice = np.random.choice(available, self.num_frames, replace=False)
+            return sorted(choice.tolist())
 
         step = available / float(self.num_frames)
         return [int(step * i) for i in range(self.num_frames)]

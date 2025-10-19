@@ -21,6 +21,7 @@ def build_dataloader(
 	flow_format: str,
 	input_type: str,
 	shuffle: bool,
+	is_train: bool = False,
 ) -> DataLoader:
 	dataset = UCFLikeDataset(
 		manifest,
@@ -28,6 +29,7 @@ def build_dataloader(
 		use_flow=use_flow,
 		flow_format=flow_format,
 		return_tensor_format="TCHW",
+		is_train=is_train,
 	)
 
 	collate_fn = build_collate_fn(input_type)
@@ -169,8 +171,9 @@ def main():
 		num_workers=args.num_workers,
 		use_flow=use_flow,
 		flow_format=args.flow_format,
-	input_type=spec.input_type,
-	shuffle=True,
+		input_type=spec.input_type,
+		shuffle=True,
+		is_train=True,
 	)
 
 	val_loader = build_dataloader(
@@ -180,8 +183,8 @@ def main():
 		num_workers=args.num_workers,
 		use_flow=use_flow,
 		flow_format=args.flow_format,
-	input_type=spec.input_type,
-	shuffle=False,
+		input_type=spec.input_type,
+		shuffle=False,
 	)
 
 	if not args.no_preview:
