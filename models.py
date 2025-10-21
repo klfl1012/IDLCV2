@@ -5,6 +5,25 @@ from typing import List, Iterable, Union
 from torchvision import models
 
 
+
+
+
+
+
+def _select_norm(channels: int, norm_type: str) -> nn.Module:
+    norm_type = norm_type.lower()
+
+    if norm_type == "group":
+        groups = 8 if channels % 8 == 0 else 1
+        return nn.GroupNorm(num_groups=groups, num_channels=channels)
+        
+    if norm_type == "layer":
+        return nn.LayerNorm(channels)
+    
+    return nn.BatchNorm2d(channels)
+    
+
+
 def _load_vgg_backbone(
     *,
     target_convs: Iterable[Union[nn.Conv2d, nn.Conv3d]], 
@@ -82,44 +101,36 @@ class Simple2DCNN(nn.Module):
         pretrained_vgg=False,
         freeze_backbone=False,
         vgg_variant="vgg16",
-        dropout_p: float = 0.2,
+        dropout_p: float = 0.1,
+        activation: str = "relu",
+        norm_type: str = "batch",
+        base_channels: int = 64,
     ):
         super(Simple2DCNN, self).__init__()
         self.pretrained_vgg = pretrained_vgg
         self.in_channels = in_channels
-
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.pool1 = nn.MaxPool2d(2)
-        self.dropout1 = nn.Dropout2d(p=dropout_p)
         
-        self.conv2 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
-        self.bn2 = nn.BatchNorm2d(128)
-        self.pool2 = nn.MaxPool2d(2)
-        self.dropout2 = nn.Dropout2d(p=dropout_p)
+        act_cls = nn.ReLU if activation.lower() == "relu" else nn.SiLU
+        widths = [base_channels, base_channels * 2, base_channels * 4]
         
-        self.conv3 = nn.Conv2d(128, 256, kernel_size=3, padding=1)
-        self.bn3 = nn.BatchNorm2d(256)
-        self.pool3 = nn.AdaptiveAvgPool2d(1)
-        self.dropout3 = nn.Dropout2d(p=dropout_p)
-
+        self.conv1 = nn.Conv2d(in_channels, widths[0], kernel_size=3, padding=1)
+        self.bn1 = _select_norm(widths[0], norm_type)
+        
+        self.conv2 = nn.Conv2d(widths[0], widths[1], kernel_size=3, padding=1)
+        self.bn2 = _select_norm(widths[1], norm_type)
+        
+        self.conv3 = nn.Conv2d(widths[1], widths[2], kernel_size=3, padding=1)
+        self.bn3 = _select_norm(widths[2], norm_type)
+        
         self.features = nn.Sequential(
-            self.conv1,
-            self.bn1,
-            nn.ReLU(),
-            self.pool1,
-            self.dropout1,
-            self.conv2,
-            self.bn2,
-            nn.ReLU(),
-            self.pool2,
-            self.dropout2,
-            self.conv3,
-            self.bn3,
-            nn.ReLU(),
-            self.pool3,
-            self.dropout3,
+            self.conv1, self.bn1, act_cls(),
+            nn.MaxPool2d(2), nn.Dropout2d(p=dropout_p),
+            self.conv2, self.bn2, act_cls(),
+            nn.MaxPool2d(2), nn.Dropout2d(p=dropout_p),
+            self.conv3, self.bn3, act_cls(),
+            nn.AdaptiveAvgPool2d(1), nn.Dropout2d(p=dropout_p),
         )
+        self.fc1 = nn.Linear(widths[2], num_classes) if num_classes else None
 
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
         self.classifier_dropout = nn.Dropout(p=dropout_p)
@@ -152,6 +163,8 @@ class Simple3DCNN(nn.Module):
         freeze_backbone: bool = False,
         vgg_variant: str = "vgg16",
         dropout_p: float = 0.2,
+        activation: str = "relu",
+        norm_type: str = "batch",
     ):
         super(Simple3DCNN, self).__init__()
         self.pretrained_vgg = pretrained_vgg

@@ -131,7 +131,10 @@ class LitClassifier(pl.LightningModule):
         optimizer = self.optimizer_class(self.parameters(), **self.optimizer_params)
         if self.scheduler_class:
             scheduler = self.scheduler_class(optimizer, **self.scheduler_params)
-            return {"optimizer": optimizer, "lr_scheduler": scheduler, "monitor": "val_loss"}
+            config = {"scheduler": scheduler, "interval": "epoch"}
+            if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                config["monitor"] = "val_loss"
+            return {"optimizer": optimizer, "lr_scheduler": config}
         return optimizer
 
 

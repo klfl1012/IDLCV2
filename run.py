@@ -70,7 +70,7 @@ def build_args() -> argparse.Namespace:
 	parser.add_argument("--seed", type=int, default=21, help="Random seed for reproducibility.")
 	parser.add_argument("--max-epochs", type=int, default=5, help="Maximum training epochs.")
 	parser.add_argument("--optimizer", type=str, default="AdamW", help="Optimizer to use (adamw or sgd).")
-	parser.add_argument("--optimizer-kwargs", type=str, default="{}", help="Optimizer keyword arguments as a dictionary string.")
+	parser.add_argument("--optimizer-kwargs", type=str, default="{'lr': 3e-4, 'weight_decay': 1e-2}", help="Optimizer keyword arguments as a dictionary string.")
 	parser.add_argument("--scheduler", type=str, default="reduce_on_plateau", help="Learning rate scheduler to use (reduce_on_plateau or step).")
 	parser.add_argument("--scheduler-kwargs", type=str, default="{}", help="Scheduler keyword arguments as a dictionary string.")
 	parser.add_argument(
@@ -144,6 +144,7 @@ def get_scheduler_class(name: str):
 	schedulers = {
 		"reduce_on_plateau": torch.optim.lr_scheduler.ReduceLROnPlateau,
 		"step": torch.optim.lr_scheduler.StepLR,
+		"cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
 	}
 	if name not in schedulers:
 		raise ValueError("Unsupported scheduler. Choose 'reduce_on_plateau' or 'step'.")
@@ -209,6 +210,7 @@ def main():
 		defaults = {
 			"step": {"step_size": 10, "gamma": 0.1},
 			"reduce_on_plateau": {"mode": "min", "factor": 0.1, "patience": 5},
+			"cosine": {"T_max": 20},
 		}
 		scheduler_kwargs = defaults.get(args.scheduler.lower(), {})
 

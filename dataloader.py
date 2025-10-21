@@ -23,20 +23,44 @@ class _AdditiveGaussianNoise:
         return torch.clamp(noisy, 0.0, 1.0)
 
 
+# def _default_frame_transform(is_train: bool = False) -> Callable[[Image.Image], torch.Tensor]:
+#     steps: List[Callable] = [transforms.Resize(_DEFAULT_FRAME_SIZE)]
+#     if is_train:
+#         steps.append(
+#             transforms.ColorJitter(
+#                 brightness=0.2,
+#                 contrast=0.2,
+#                 saturation=0.2,
+#                 hue=0.02,
+#             )
+#         )
+#     steps.append(transforms.ToTensor())
+#     if is_train:
+#         steps.append(transforms.RandomApply([_AdditiveGaussianNoise(std=0.02)], p=0.5))
+#         steps.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.2), ratio=(0.3, 3.3)))
+#     return transforms.Compose(steps)
+
 def _default_frame_transform(is_train: bool = False) -> Callable[[Image.Image], torch.Tensor]:
-    steps: List[Callable] = [transforms.Resize(_DEFAULT_FRAME_SIZE)]
+    mean = [0.485, 0.456, 0.406]
+    std = [0.229, 0.224, 0.225]
+
     if is_train:
-        steps.append(
-            transforms.ColorJitter(
-                brightness=0.2,
-                contrast=0.2,
-                saturation=0.2,
-                hue=0.02,
-            )
-        )
+        steps = [
+            transforms.RandomResizedCrop(_DEFAULT_FRAME_SIZE, scale=(0.7, 1.0)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.03),
+        ]
+    else:
+        steps = [
+            transforms.Resize(int(_DEFAULT_FRAME_SIZE[0] * 1.15)),
+            transforms.CenterCrop(_DEFAULT_FRAME_SIZE),
+        ]
+
     steps.append(transforms.ToTensor())
     if is_train:
-        steps.append(transforms.RandomApply([_AdditiveGaussianNoise(std=0.02)], p=0.5))
+        steps.append(transforms.RandomApply([_AdditiveGaussianNoise(std=0.02)], p=0.4))
+    steps.append(transforms.Normalize(mean=mean, std=std))
+    if is_train:
         steps.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.2), ratio=(0.3, 3.3)))
     return transforms.Compose(steps)
 
@@ -97,9 +121,8 @@ class UCFLikeDataset(Dataset):
             return idx
         #temporary change for training
         if self.is_train:
-            choice = np.random.choice(available, self.num_frames, replace=False)
-            return sorted(choice.tolist())
-
+            start = np.random.randint(0, available - self.num_frames + 1)
+            return list(range(start, start + self.num_frames))
         step = available / float(self.num_frames)
         return [int(step * i) for i in range(self.num_frames)]
 
