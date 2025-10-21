@@ -7,7 +7,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint
 from pytorch_lightning.loggers import CSVLogger
 from pytorch_lightning.profilers import PyTorchProfiler
-from torch.profiler import ProfilerActivity
+from torch.profiler import ProfilerActivity, schedule
 
 
 class LitClassifier(pl.LightningModule):
@@ -165,7 +165,12 @@ def get_trainer(
     profiler = PyTorchProfiler(
         dirpath=outdir,
         filename="profiler_trace.json",
-        schedule=None,
+        schedule=schedule(
+            wait=2,
+            warmup=2,
+            active=6,
+            repeat=1
+        ),
         activities=activities,
         record_shapes=True,
         profile_memory=True,
