@@ -1,8 +1,76 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from typing import List, Iterable, Union
 from torchvision import models
+
+
+def _load_vgg_backbone(
+    *,
+    target_convs: Iterable[Union[nn.Conv2d, nn.Conv3d]], 
+    in_channels: int,
+    pretrained_vgg: bool,
+    vgg_variant: str,
+    freeze_backbone: bool,
+    is_3d: bool,
+) -> None:
+
+    if not pretrained_vgg:
+        return 
+
+    if is_3d and in_channels != 3:
+        raise ValueError("3D model pretrained VGG initialization requires in_channels=3.")
+    if not is_3d and in_channels % 3 != 0:
+        raise ValueError("Pretrained VGG weights require the input channels to be a multiple of 3.")
+
+    try:
+        weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
+        vgg = getattr(models, vgg_variant)(weights=weights)
+    
+    except Exception:
+        vgg = getattr(models, vgg_variant)(pretrained=True)
+
+    vgg_convs: List[nn.Conv2d] = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
+    src_idx = 0
+
+    for idx, dst in enumerate(target_convs):
+        matched = None
+
+        while src_idx < len(vgg_convs):
+            candidate = vgg_convs[src_idx]
+            src_idx += 1
+            cond = candidate.out_channels == dst.out_channels
+            if idx == 0 and not is_3d:
+                cond &= True
+            else:
+                cond &= candidate.in_channels == dst.in_channels
+            if cond:
+                matched = candidate
+                break
+
+        if matched is None:
+            raise RuntimeError("Kein passender VGG-Layer gefunden.")
+
+        weight = matched.weight.data
+        if is_3d:
+            k_t = dst.weight.shape[2]
+            weight = weight.unsqueeze(2).repeat(1, 1, k_t, 1, 1) / k_t
+        elif idx == 0 and dst.weight.shape[1] != weight.shape[1]:
+            repeats = dst.weight.shape[1]
+            expanded = torch.zeros_like(dst.weight.data)
+            for channel in range(repeats):
+                expanded[:, channel, :, :] = weight[:, channel % weight.shape[1], :, :]
+            weight = expanded
+
+        dst.weight.data.copy_(weight)
+        if matched.bias is not None and dst.bias is not None:
+            dst.bias.data.copy_(matched.bias.data)
+
+    if freeze_backbone:
+        for conv in target_convs:
+            for p in conv.parameters():
+                p.requires_grad = False
+
 
 
 class Simple2DCNN(nn.Module):
@@ -56,62 +124,14 @@ class Simple2DCNN(nn.Module):
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
         self.classifier_dropout = nn.Dropout(p=dropout_p)
 
-        if self.pretrained_vgg:
-            if in_channels % 3 != 0:
-                raise ValueError("Pretrained VGG weights require the input channels to be a multiple of 3.")
-            try:
-                print(f"[Simple2DCNN] Loading pretrained {vgg_variant.upper()} weights from torchvision...")
-                weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
-                vgg = getattr(models, vgg_variant)(weights=weights)
-            
-            except Exception:
-                print(f"[Simple2DCNN] Falling back to torchvision pretrained={True} for {vgg_variant}.")
-                vgg = getattr(models, vgg_variant)(pretrained=True)
-
-            vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
-            target_convs = [self.conv1, self.conv2, self.conv3]
-
-            src_idx = 0
-            for idx, dst in enumerate(target_convs):
-                matched = None
-                while src_idx < len(vgg_convs):
-                    candidate = vgg_convs[src_idx]
-                    src_idx += 1
-                    if idx == 0:
-                        # First conv layer: accept any conv with matching output channels.
-                        if candidate.out_channels == dst.out_channels:
-                            matched = candidate
-                            break
-                    else:
-                        if (
-                            candidate.out_channels == dst.out_channels
-                            and candidate.in_channels == dst.in_channels
-                        ):
-                            matched = candidate
-                            break
-
-                if matched is None:
-                    raise RuntimeError("Unable to find matching VGG conv layer for Simple2DCNN.")
-
-                src_weight = matched.weight.data
-                if idx == 0 and dst.weight.shape[1] != src_weight.shape[1]:
-                    print(
-                        f"[Simple2DCNN] Expanding first conv weights from {src_weight.shape[1]} to {dst.weight.shape[1]} channels by repetition."
-                    )
-                    repeats = dst.weight.shape[1]
-                    expanded = torch.zeros_like(dst.weight.data)
-                    for channel in range(repeats):
-                        expanded[:, channel, :, :] = src_weight[:, channel % src_weight.shape[1], :, :]
-                    dst.weight.data.copy_(expanded)
-                else:
-                    dst.weight.data.copy_(src_weight)
-
-                if matched.bias is not None and dst.bias is not None:
-                    dst.bias.data.copy_(matched.bias.data)
-
-            if freeze_backbone:
-                for p in self.features.parameters():
-                    p.requires_grad = False
+        _load_vgg_backbone(
+            target_convs=[self.conv1, self.conv2, self.conv3],
+            in_channels=in_channels,
+            pretrained_vgg=pretrained_vgg,
+            vgg_variant=vgg_variant,
+            freeze_backbone=freeze_backbone,    
+            is_3d=False,
+        )
 
     def forward(self, x):
         x = self.features(x)
@@ -171,48 +191,14 @@ class Simple3DCNN(nn.Module):
         self.fc1 = nn.Linear(256, num_classes) if num_classes else None
         self.classifier_dropout = nn.Dropout(p=dropout_p)
 
-        if self.pretrained_vgg:
-            if in_channels != 3:
-                raise ValueError("Simple3DCNN pretrained VGG initialization requires in_channels=3.")
-            try:
-                print(f"[Simple3DCNN] Loading pretrained {vgg_variant.upper()} weights from torchvision...")
-                weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
-                vgg = getattr(models, vgg_variant)(weights=weights)
-            except Exception:
-                print(f"[Simple3DCNN] Falling back to torchvision pretrained={True} for {vgg_variant}.")
-                vgg = getattr(models, vgg_variant)(pretrained=True)
-
-            vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
-            target_convs = [self.conv1, self.conv2, self.conv3]
-            print("[Simple3DCNN] Inflating 2D VGG kernels into 3D convolutions.")
-            src_idx = 0
-            for dst in target_convs:
-                matched = None
-                while src_idx < len(vgg_convs):
-                    candidate = vgg_convs[src_idx]
-                    src_idx += 1
-                    if (
-                        candidate.out_channels == dst.out_channels
-                        and candidate.in_channels == dst.in_channels
-                    ):
-                        matched = candidate
-                        break
-
-                if matched is None:
-                    raise RuntimeError(
-                        "Unable to align VGG convolution weights with Simple3DCNN layers."
-                    )
-
-                weight_2d = matched.weight.data  # (out_c, in_c, k, k)
-                k_t = dst.weight.shape[2]
-                weight_3d = weight_2d.unsqueeze(2).repeat(1, 1, k_t, 1, 1) / k_t
-                dst.weight.data.copy_(weight_3d)
-                if matched.bias is not None and dst.bias is not None:
-                    dst.bias.data.copy_(matched.bias.data)
-
-            if freeze_backbone:
-                for p in self.features.parameters():
-                    p.requires_grad = False
+        _load_vgg_backbone(
+            target_convs=[self.conv1, self.conv2, self.conv3],
+            in_channels=in_channels,
+            pretrained_vgg=pretrained_vgg,
+            vgg_variant=vgg_variant,
+            freeze_backbone=freeze_backbone,
+            is_3d=True,
+        )
 
     def forward(self, x):
         x = self.features(x)

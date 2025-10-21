@@ -1,6 +1,6 @@
 import os
 from typing import Optional, Type
-
+import math
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -34,6 +34,7 @@ class LitClassifier(pl.LightningModule):
         self.history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
         self._train_epoch_metrics = []
         self._val_epoch_metrics = []
+
     def forward(self, x):
         if isinstance(x, dict):
             if "frames" in x:
@@ -139,7 +140,7 @@ def get_trainer(
         max_epochs: int = 100,
         gpus: int = 1,
         early_stopping_patience: int = 5,
-        outdir: str = "./results"
+        outdir: str = "./results",
 ) -> pl.Trainer:
     
     checkpoint = ModelCheckpoint(
@@ -169,7 +170,7 @@ def get_trainer(
             wait=2,
             warmup=2,
             active=6,
-            repeat=1
+            repeat=1,
         ),
         activities=activities,
         record_shapes=True,
