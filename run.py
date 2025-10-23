@@ -114,6 +114,16 @@ def build_args() -> argparse.Namespace:
 		action="store_true",
 		help="Use ImageNet-pretrained VGG weights for applicable CNN backbones.",
 	)
+	parser.add_argument(
+		"--pretrained-r2p1d",
+		action="store_true",
+		help="Use Kinetics-pretrained R2+1D weights for applicable backbones.",
+	)
+	parser.add_argument(
+		"--pretrained-resnet",
+		action="store_true",
+		help="Use ImageNet-pretrained ResNet weights for applicable CNN backbones.",
+	)
 
 	return parser.parse_args()
 
@@ -198,8 +208,16 @@ def main():
 	model_kwargs = {}
 	if spec.name.lower() in {"simple2dcnn", "simple3dcnn", "latefusion2d", "twostream2d", "frameaggregation2d"}:
 		model_kwargs["pretrained_vgg"] = args.pretrained_vgg
+	
+	if spec.name.lower() in {"frameaggregation2d_resnet", "latefusion2d_resnet", "twostream2d_mod"}:
+		model_kwargs["pretrained_resnet"] = args.pretrained_resnet
+	
+	if spec.name.lower() == "r2p1d":
+		model_kwargs["pretrained_r2p1d"] = args.pretrained_r2p1d
+
+		
 	model = spec.build_fn(args.num_classes, args.num_frames, **model_kwargs)
-	criterion = nn.CrossEntropyLoss()
+	criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
 	optimizer_kwargs = parse_dict_arg(args.optimizer_kwargs, "optimizer-kwargs")
 	scheduler_kwargs = parse_dict_arg(args.scheduler_kwargs, "scheduler-kwargs")

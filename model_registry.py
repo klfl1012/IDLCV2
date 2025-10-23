@@ -9,6 +9,10 @@ from models import (
     Simple2DCNN,
     Simple3DCNN,
     TwoStream2D,
+    R2p1D,
+    TwoStream2DModified,
+    FrameAggregationResNet,
+    LateFusionResNet,
 )
 
 
@@ -61,6 +65,41 @@ MODEL_REGISTRY: Dict[str, ModelSpec] = {
         input_type="two_stream",
         requires_flow=True,
         description="Two-stream architecture combining RGB and flow predictions.",
+    ),
+    "r2p1d": ModelSpec(
+        name="R2p1D",
+        build_fn=lambda num_classes, _num_frames, **extras: R2p1D
+            (num_classes=num_classes, **extras),
+        input_type="clip_3d",
+        description="R(2+1)D model for spatio-temporal feature learning.",
+    ),
+    "twostream2d_mod": ModelSpec(
+        name="TwoStream2dModified",
+        build_fn=lambda num_classes, _num_frames, **extras: TwoStream2DModified(num_classes=num_classes, **extras),
+        input_type="two_stream",
+        requires_flow=True,
+        description="Modified Two-stream architecture combining RGB and flow predictions.",
+    ),
+    "frameaggregation2d_resnet": ModelSpec(
+        name="FrameAggregation2DResNet",
+        build_fn=lambda num_classes, num_frames, **extras: FrameAggregationResNet(
+            num_classes=num_classes,
+            num_frames=num_frames,
+            **extras,
+        ),
+        input_type="clip",
+        description="Aggregates frame features with a ResNet backbone.",
+    ),
+    "latefusion2d_resnet": ModelSpec(
+        name="LateFusion2DResNet",
+        build_fn=lambda num_classes, num_frames, **extras: LateFusionResNet(
+            num_classes=num_classes,
+            num_frames=num_frames,
+            **extras,
+        ),
+        input_type="late_fusion",
+        requires_flow=False,
+        description="Late fusion of per-frame RGB features without optical flow using ResNet.",
     ),
 }
 
