@@ -76,7 +76,6 @@ def _load_vgg_backbone(
 
 
 
-
 class Simple2DCNN(nn.Module):
     def __init__(
         self,
