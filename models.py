@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Iterable, List, Union
+from typing import Iterable, List, Union, Optional
 from torchvision import models
 
 def _select_norm(channels: int, norm_type: str) -> nn.Module:
@@ -19,9 +19,11 @@ def _select_norm3d(channels: int, norm_type: str) -> nn.Module:
         return nn.GroupNorm(num_groups=1, num_channels=channels)
     return nn.BatchNorm3d(channels)
 
+
 def _load_vgg_backbone(
     *,
     target_convs: Iterable[Union[nn.Conv2d, nn.Conv3d]],
+    target_bns: Optional[Iterable[Optional[nn.Module]]] = None, 
     in_channels: int,
     pretrained_vgg: bool,
     vgg_variant: str,
@@ -31,48 +33,127 @@ def _load_vgg_backbone(
     if not pretrained_vgg:
         return
     if is_3d and in_channels != 3:
-        raise ValueError("3D VGG-Initialisierung setzt in_channels=3 voraus.")
+        raise ValueError("3D VGGG initialization requires in_channels=3.")
     if not is_3d and in_channels % 3 != 0:
-        raise ValueError("VGG-Weights benötigen in_channels als Vielfaches von 3.")
+        raise ValueError("VGG weights require in_channels to be a multiple of 3.")
     try:
         weights = getattr(models, f"{vgg_variant.upper()}_Weights").IMAGENET1K_V1
         vgg = getattr(models, vgg_variant)(weights=weights)
     except Exception:
         vgg = getattr(models, vgg_variant)(pretrained=True)
-    vgg_convs: List[nn.Conv2d] = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
-    src_idx = 0
+
+    # Simpler conv matching logic: get all convs in VGG features
+    vgg_convs = [m for m in vgg.features if isinstance(m, nn.Conv2d)]
+    print("Available VGG convs:", [(m.in_channels, m.out_channels) for m in vgg_convs])
+    
     for idx, dst in enumerate(target_convs):
         matched = None
-        while src_idx < len(vgg_convs):
-            candidate = vgg_convs[src_idx]
-            src_idx += 1
-            cond = candidate.out_channels == dst.out_channels
-            if idx == 0 and not is_3d:
-                cond &= True
-            else:
-                cond &= candidate.in_channels == dst.in_channels
+        for candidate_conv in vgg_convs:  # reset search each time
+            cond = candidate_conv.out_channels == dst.out_channels
+            # Only check in_channels if we're not at the first layer
+            if idx > 0:
+                cond &= candidate_conv.in_channels <= dst.in_channels
             if cond:
-                matched = candidate
+                matched = candidate_conv
                 break
+
         if matched is None:
-            raise RuntimeError("Kein passender VGG-Layer gefunden.")
-        weight = matched.weight.data
-        if is_3d:
-            k_t = dst.weight.shape[2]
-            weight = weight.unsqueeze(2).repeat(1, 1, k_t, 1, 1) / k_t
-        elif idx == 0 and dst.weight.shape[1] != weight.shape[1]:
-            repeats = dst.weight.shape[1]
-            expanded = torch.zeros_like(dst.weight.data)
-            for channel in range(repeats):
-                expanded[:, channel, :, :] = weight[:, channel % weight.shape[1], :, :]
-            weight = expanded
-        dst.weight.data.copy_(weight)
-        if matched.bias is not None and dst.bias is not None:
-            dst.bias.data.copy_(matched.bias.data)
+            print(f"[WARN] No matching VGG conv found for target[{idx}] "
+                f"(in={dst.in_channels}, out={dst.out_channels})")
+            continue
+
+        with torch.no_grad():
+            weight = matched.weight
+            if is_3d:
+                k_t = dst.weight.shape[2]
+                weight = weight.unsqueeze(2).repeat(1, 1, k_t, 1, 1) / k_t
+            elif idx == 0 and dst.weight.shape[1] != weight.shape[1]:
+                repeats = dst.weight.shape[1]
+                expanded = torch.zeros_like(dst.weight)
+                for c in range(repeats):
+                    expanded[:, c, :, :] = weight[:, c % weight.shape[1], :, :]
+                weight = expanded
+            dst.weight.copy_(weight)
+            if matched.bias is not None and dst.bias is not None:
+                dst.bias.copy_(matched.bias)
+            # Print conv copy info
+            print(
+                f"Conv[{idx}] copied: weight shape = {dst.weight.shape}, "
+                f"bias shape = {dst.bias.shape if dst.bias is not None else None}"
+            )
+
+        print(f"[VGG INIT] Copied weights for conv[{idx}] "
+            f"(VGG in={matched.in_channels}, out={matched.out_channels})")
+
+        # The BN mapping/copying logic remains as before (for 2D only)
+        if not is_3d and target_bns is not None:
+            try:
+                dst_bn = list(target_bns)[idx]
+            except Exception:
+                dst_bn = None
+            # Find the corresponding BN in VGG (if present)
+            # We'll look for the next BatchNorm2d after this conv in vgg.features
+            matched_bn = None
+            vgg_features = list(vgg.features)
+            conv_idx = vgg_features.index(matched)
+            for j in range(conv_idx + 1, len(vgg_features)):
+                if isinstance(vgg_features[j], nn.BatchNorm2d):
+                    matched_bn = vgg_features[j]
+                    break
+                if isinstance(vgg_features[j], nn.Conv2d):
+                    break
+            if matched_bn is not None and dst_bn is not None:
+                with torch.no_grad():
+                    # Copy affine parameters (weight, bias)
+                    if hasattr(dst_bn, "weight") and dst_bn.weight is not None and \
+                    hasattr(matched_bn, "weight") and matched_bn.weight is not None:
+                        assert isinstance(dst_bn.weight, torch.Tensor)
+                        assert isinstance(matched_bn.weight, torch.Tensor)
+                        dst_bn.weight.copy_(matched_bn.weight)
+                    if hasattr(dst_bn, "bias") and dst_bn.bias is not None and \
+                    hasattr(matched_bn, "bias") and matched_bn.bias is not None:
+                        assert isinstance(dst_bn.bias, torch.Tensor)
+                        assert isinstance(matched_bn.bias, torch.Tensor)
+                        dst_bn.bias.copy_(matched_bn.bias)
+                    # Copy running statistics (buffers)
+                    if hasattr(dst_bn, "running_mean") and dst_bn.running_mean is not None and \
+                    hasattr(matched_bn, "running_mean") and matched_bn.running_mean is not None:
+                        assert isinstance(dst_bn.running_mean, torch.Tensor)
+                        assert isinstance(matched_bn.running_mean, torch.Tensor)
+                        dst_bn.running_mean.copy_(matched_bn.running_mean)
+                    if hasattr(dst_bn, "running_var") and dst_bn.running_var is not None and \
+                    hasattr(matched_bn, "running_var") and matched_bn.running_var is not None:
+                        assert isinstance(dst_bn.running_var, torch.Tensor)
+                        assert isinstance(matched_bn.running_var, torch.Tensor)
+                        dst_bn.running_var.copy_(matched_bn.running_var)
+                    # Print BN copy info
+                    print(
+                        f"BN[{idx}] copied: weight shape = "
+                        f"{dst_bn.weight.shape if hasattr(dst_bn, 'weight') and dst_bn.weight is not None else None}, "
+                        f"bias shape = "
+                        f"{dst_bn.bias.shape if hasattr(dst_bn, 'bias') and dst_bn.bias is not None else None}"
+                    )
+
+
+    # Freeze backbone layers (also freeze BatchNorm if present, this is the case for vgg16_bn)
     if freeze_backbone:
-        for conv in target_convs:
+        for i, conv in enumerate(target_convs):
+            if not hasattr(conv, "parameters") or not callable(conv.parameters):
+                raise TypeError(f"target_convs[{i}] is not a nn.Module: {type(conv)}")
             for p in conv.parameters():
                 p.requires_grad = False
+            if target_bns is not None:
+                try:
+                    bn = list(target_bns)[i]
+                except Exception:
+                    bn = None
+                if bn is not None:
+                    if not hasattr(bn, "parameters") or not callable(bn.parameters):
+                        raise TypeError(f"target_bns[{i}] is not a nn.Module: {type(bn)}")
+                    for p in bn.parameters():
+                        p.requires_grad = False
+                    if isinstance(bn, (nn.BatchNorm2d, nn.BatchNorm3d)):
+                        bn.eval()
 
 
 
@@ -84,7 +165,7 @@ class Simple2DCNN(nn.Module):
         pretrained_vgg: bool = False,
         freeze_backbone: bool = False,
         vgg_variant: str = "vgg16_bn",
-        dropout_p: float = 0.1,
+        dropout_p: float = 0.2,
         activation: str = "silu",
         norm_type: str = "batch",
         base_channels: int = 64,
@@ -112,10 +193,11 @@ class Simple2DCNN(nn.Module):
         self.fc = nn.Linear(self.feature_dim, num_classes) if num_classes else None
         _load_vgg_backbone(
             target_convs=[self.conv1, self.conv2, self.conv3],
+            target_bns=[self.bn1, self.bn2, self.bn3],
             in_channels=in_channels,
             pretrained_vgg=pretrained_vgg,
             vgg_variant=vgg_variant,
-            freeze_backbone=freeze_backbone,
+            freeze_backbone=pretrained_vgg,
             is_3d=False,
         )
 
@@ -170,6 +252,7 @@ class Simple3DCNN(nn.Module):
         self.fc = nn.Linear(self.feature_dim, num_classes) if num_classes else None
         _load_vgg_backbone(
             target_convs=[self.conv1, self.conv2, self.conv3],
+            target_bns=[self.bn1, self.bn2, self.bn3], 
             in_channels=in_channels,
             pretrained_vgg=pretrained_vgg,
             vgg_variant=vgg_variant,
@@ -363,3 +446,4 @@ class LateFusionResNet(nn.Module):
         feats = self.backbone(rgb.view(b * t, c, h, w))
         feats = feats.view(b, t * feats.size(1))
         return self.classifier(feats)
+
