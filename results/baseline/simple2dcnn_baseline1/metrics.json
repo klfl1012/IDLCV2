@@ -1,0 +1,15 @@
+{
+  "metrics": {
+    "loss": 2.6026880105336505,
+    "accuracy": 0.11666666666666667,
+    "samples": 120
+  },
+  "checkpoint": "results/simple2dcnn_baseline1/best_checkpoint.ckpt",
+  "model": "simple2dcnn",
+  "num_classes": 10,
+  "num_frames": 10,
+  "batch_size": 16,
+  "use_flow": false,
+  "flow_format": "npy",
+  "pretrained_vgg": false
+}

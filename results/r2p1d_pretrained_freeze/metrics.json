@@ -1,0 +1,15 @@
+{
+  "metrics": {
+    "loss": 1.2695566972096761,
+    "accuracy": 0.6833333333333333,
+    "samples": 120
+  },
+  "checkpoint": "results/r2p1d_pretrained_freeze/best_checkpoint.ckpt",
+  "model": "r2p1d",
+  "num_classes": 10,
+  "num_frames": 10,
+  "batch_size": 16,
+  "use_flow": false,
+  "flow_format": "npy",
+  "pretrained_vgg": false
+}

@@ -1,0 +1,15 @@
+{
+  "metrics": {
+    "loss": 2.472191842397054,
+    "accuracy": 0.2,
+    "samples": 120
+  },
+  "checkpoint": "results/frameagg_augmented/best_checkpoint.ckpt",
+  "model": "frameaggregation2d",
+  "num_classes": 10,
+  "num_frames": 10,
+  "batch_size": 16,
+  "use_flow": false,
+  "flow_format": "npy",
+  "pretrained_vgg": false
+}

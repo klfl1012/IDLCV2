@@ -1,0 +1,15 @@
+{
+  "metrics": {
+    "loss": 2.2765875657399497,
+    "accuracy": 0.125,
+    "samples": 120
+  },
+  "checkpoint": "results/latefusion_baseline1/best_checkpoint.ckpt",
+  "model": "latefusion2d",
+  "num_classes": 10,
+  "num_frames": 10,
+  "batch_size": 16,
+  "use_flow": false,
+  "flow_format": "npy",
+  "pretrained_vgg": false
+}
