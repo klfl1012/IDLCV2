@@ -1,0 +1,15 @@
+{
+  "metrics": {
+    "loss": 2.138694715499878,
+    "accuracy": 0.26666666666666666,
+    "samples": 120
+  },
+  "checkpoint": "results/twostream_baseline1/best_checkpoint.ckpt",
+  "model": "twostream2d",
+  "num_classes": 10,
+  "num_frames": 10,
+  "batch_size": 16,
+  "use_flow": true,
+  "flow_format": "npy",
+  "pretrained_vgg": false
+}
