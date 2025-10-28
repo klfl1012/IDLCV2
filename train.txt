@@ -1,0 +1,20 @@
+python /zhome/13/5/223702/IDLCV2/run.py --model simple2dcnn --max-epochs 100 --batch-size 32 --outdir ./results/simple2dcnn_baseline1 && \
+python /zhome/13/5/223702/IDLCV2/run.py --model simple3dcnn --max-epochs 100 --batch-size 32 --outdir ./results/simple3dcnn_baseline1 && \
+python /zhome/13/5/223702/IDLCV2/run.py --model frameaggregation2d --max-epochs 100 --batch-size 32 --outdir ./results/frameagg_baseline1 && \
+python /zhome/13/5/223702/IDLCV2/run.py --model latefusion2d --max-epochs 100 --batch-size 32 --outdir ./results/latefusion_baseline1 && \
+python /zhome/13/5/223702/IDLCV2/run.py --model twostream2d --use-flow --max-epochs 100 --batch-size 32 --outdir ./results/twostream_baseline1
+
+
+python /zhome/13/5/223702/IDLCV2/run.py --model simple2dcnn --max-epochs 100 --batch-size 32 --outdir ./results/simple2dcnn_augmented
+python /zhome/13/5/223702/IDLCV2/run.py --model simple3dcnn --max-epochs 100 --batch-size 32 --outdir ./results/simple3dcnn_augmented
+python /zhome/13/5/223702/IDLCV2/run.py --model frameaggregation2d --max-epochs 100 --batch-size 32 --outdir ./results/frameagg_augmented
+python /zhome/13/5/223702/IDLCV2/run.py --model latefusion2d --max-epochs 100 --batch-size 32 --outdir ./results/latefusion_augmented
+python /zhome/13/5/223702/IDLCV2/run.py --model twostream2d --use-flow --max-epochs 100 --batch-size 32 --outdir ./results/twostream_augmented
+
+
+python /zhome/13/5/223702/IDLCV2/run.py --model simple2dcnn --pretrained-vgg --max-epochs 100 --batch-size 32 --outdir ./results/simple2dcnn_pretrained
+python /zhome/13/5/223702/IDLCV2/run.py --model simple3dcnn --pretrained-vgg --max-epochs 100 --batch-size 32 --outdir ./results/simple3dcnn_pretrained
+python /zhome/13/5/223702/IDLCV2/run.py --model frameaggregation2d --pretrained-vgg --max-epochs 100 --batch-size 32 --outdir ./results/frameagg_pretrained
+python /zhome/13/5/223702/IDLCV2/run.py --model latefusion2d --pretrained-vgg --max-epochs 100 --batch-size 32 --outdir ./results/latefusion_pretrained
+python /zhome/13/5/223702/IDLCV2/run.py --model twostream2d --pretrained-vgg --use-flow --max-epochs 100 --batch-size 32 --outdir ./results/twostream_pretrained
+

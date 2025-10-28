@@ -70,7 +70,7 @@ def build_args() -> argparse.Namespace:
 	parser.add_argument("--seed", type=int, default=21, help="Random seed for reproducibility.")
 	parser.add_argument("--max-epochs", type=int, default=5, help="Maximum training epochs.")
 	parser.add_argument("--optimizer", type=str, default="AdamW", help="Optimizer to use (adamw or sgd).")
-	parser.add_argument("--optimizer-kwargs", type=str, default="{}", help="Optimizer keyword arguments as a dictionary string.")
+	parser.add_argument("--optimizer-kwargs", type=str, default="{'lr': 3e-4, 'weight_decay': 1e-2}", help="Optimizer keyword arguments as a dictionary string.")
 	parser.add_argument("--scheduler", type=str, default="reduce_on_plateau", help="Learning rate scheduler to use (reduce_on_plateau or step).")
 	parser.add_argument("--scheduler-kwargs", type=str, default="{}", help="Scheduler keyword arguments as a dictionary string.")
 	parser.add_argument(
@@ -114,6 +114,16 @@ def build_args() -> argparse.Namespace:
 		action="store_true",
 		help="Use ImageNet-pretrained VGG weights for applicable CNN backbones.",
 	)
+	parser.add_argument(
+		"--pretrained-r2p1d",
+		action="store_true",
+		help="Use Kinetics-pretrained R2+1D weights for applicable backbones.",
+	)
+	parser.add_argument(
+		"--pretrained-resnet",
+		action="store_true",
+		help="Use ImageNet-pretrained ResNet weights for applicable CNN backbones.",
+	)
 
 	return parser.parse_args()
 
@@ -144,6 +154,7 @@ def get_scheduler_class(name: str):
 	schedulers = {
 		"reduce_on_plateau": torch.optim.lr_scheduler.ReduceLROnPlateau,
 		"step": torch.optim.lr_scheduler.StepLR,
+		"cosine": torch.optim.lr_scheduler.CosineAnnealingLR,
 	}
 	if name not in schedulers:
 		raise ValueError("Unsupported scheduler. Choose 'reduce_on_plateau' or 'step'.")
@@ -197,8 +208,16 @@ def main():
 	model_kwargs = {}
 	if spec.name.lower() in {"simple2dcnn", "simple3dcnn", "latefusion2d", "twostream2d", "frameaggregation2d"}:
 		model_kwargs["pretrained_vgg"] = args.pretrained_vgg
+	
+	if spec.name.lower() in {"frameaggregation2d_resnet", "latefusion2d_resnet", "twostream2d_mod"}:
+		model_kwargs["pretrained_resnet"] = args.pretrained_resnet
+	
+	if spec.name.lower() == "r2p1d":
+		model_kwargs["pretrained_r2p1d"] = args.pretrained_r2p1d
+
+		
 	model = spec.build_fn(args.num_classes, args.num_frames, **model_kwargs)
-	criterion = nn.CrossEntropyLoss()
+	criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
 
 	optimizer_kwargs = parse_dict_arg(args.optimizer_kwargs, "optimizer-kwargs")
 	scheduler_kwargs = parse_dict_arg(args.scheduler_kwargs, "scheduler-kwargs")
@@ -209,6 +228,7 @@ def main():
 		defaults = {
 			"step": {"step_size": 10, "gamma": 0.1},
 			"reduce_on_plateau": {"mode": "min", "factor": 0.1, "patience": 5},
+			"cosine": {"T_max": 20},
 		}
 		scheduler_kwargs = defaults.get(args.scheduler.lower(), {})
 
