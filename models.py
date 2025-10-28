@@ -311,39 +311,6 @@ class Simple3DCNN(nn.Module):
         return x
 
 
-class ResNet2DVideoCNN(nn.Module):
-    """
-    Wrapper for torchvision.models.resnet (2D) for video classification.
-    Accepts a single frame or a batch of frames in (B, C, H, W) or (B*T, C, H, W).
-    """
-    def __init__(
-        self,
-        num_classes: int,
-        pretrained_resnet: bool = True,
-        freeze_backbone: bool = False,
-        resnet_variant: str = "resnet18",
-    ):
-        super().__init__()
-        resnet_fn = getattr(models, resnet_variant)
-        weights = None
-        if pretrained_resnet:
-            try:
-                weights_enum = getattr(models, f"{resnet_variant.upper()}_Weights")
-                weights = weights_enum.DEFAULT
-            except Exception:
-                weights = "IMAGENET1K_V1" if pretrained_resnet else None
-        self.model = resnet_fn(weights=weights)
-        in_features = self.model.fc.in_features
-        self.model.fc = nn.Linear(in_features, num_classes)
-        if freeze_backbone:
-            for name, param in self.model.named_parameters():
-                if not name.startswith("fc."):
-                    param.requires_grad = False
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.model(x)
-
-
 class R2p1D(nn.Module):
     """
     Wrapper for torchvision.models.video.r2plus1d_18 for video classification.
@@ -427,64 +394,3 @@ class TwoStream2D(nn.Module):
         rgb_feats = F.softmax(rgb_feats, dim=-1).mean(dim=1)
         flow_feats = F.softmax(flow_feats, dim=-1)
         return rgb_feats + flow_feats
-    
-
-class TwoStream2DModified(nn.Module):
-    def __init__(self, num_classes: int = 10, pretrained_resnet: bool = True, use_flow: bool = False):
-        super().__init__()
-        self.use_flow = use_flow
-        # RGB branch
-        self.rgb_model = ResNet2DVideoCNN(num_classes=10, pretrained_resnet=pretrained_resnet)
-        # Flow branch
-        if use_flow:
-            self.flow_model = Simple2DCNN(num_classes=None, in_channels=18, pretrained_vgg=False)
-        # Dynamically compute classifier input dimension
-        flow_dim = self.flow_model.feature_dim if use_flow else 0
-        self.classifier = nn.Linear(self.rgb_model.model.fc.in_features + flow_dim, num_classes)
-
-    def forward(self, rgb: torch.Tensor, flow: torch.Tensor) -> torch.Tensor:
-        b, tr, cr, hr, wr = rgb.shape
-        b, tf, cf, hf, wf = flow.shape
-
-        # flatten frames for 2D CNN
-        rgb = rgb.view(b * tr, cr, hr, wr)
-        rgb_feats = self.rgb_model(rgb)  # (B*T, feat_dim)
-        rgb_feats = rgb_feats.view(b, tr, -1).mean(dim=1)  # Aggregate over frames
-
-        if self.use_flow and flow is not None:
-            b, tf, cf, hf, wf = flow.shape
-            flow = flow.view(b * tf, cf, hf, wf)
-            flow_feats = self.flow_model(flow)
-            flow_feats = flow_feats.view(b, tf, -1).mean(dim=1)
-            combined_feats = torch.cat([rgb_feats, flow_feats], dim=1)
-        else:
-            combined_feats = rgb_feats
-
-        return self.classifier(combined_feats)
-
-
-class FrameAggregationResNet(nn.Module):
-    def __init__(self, num_classes: int, num_frames: int = 10, pretrained_resnet: bool = True):
-        super().__init__()
-        self.num_frames = num_frames
-        self.backbone = ResNet2DVideoCNN(num_classes=num_classes, pretrained_resnet=pretrained_resnet)
-        self.fc = nn.Linear(self.backbone.model.fc.in_features, num_classes)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        b, t, c, h, w = x.shape
-        x = x.view(b, t * c, h, w)
-        feats = self.backbone(x)
-        return self.fc(feats)
-    
-class LateFusionResNet(nn.Module):
-    def __init__(self, num_classes: int, num_frames: int, pretrained_resnet: bool = True):
-        super().__init__()
-        self.num_frames = num_frames
-        self.backbone = ResNet2DVideoCNN(num_classes=num_classes, pretrained_resnet=pretrained_resnet)
-        self.classifier = nn.Linear(self.backbone.model.fc.in_features * num_frames, num_classes)
-
-    def forward(self, *, rgb: torch.Tensor):
-        b, t, c, h, w = rgb.shape
-        feats = self.backbone(rgb.view(b * t, c, h, w))
-        feats = feats.view(b, t * feats.size(1))
-        return self.classifier(feats)
